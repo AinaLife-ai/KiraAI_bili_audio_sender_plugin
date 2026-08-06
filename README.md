@@ -1,0 +1,2 @@
+# KiraAI_bili_audio_sender_plugin
+下载B站视频音频并以QQ语音条发送：LLM自然语言点歌、/点歌命令词、B站链接自动转语音三入口，官方API+WBI签名降级，内置缓存与白名单。
