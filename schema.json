@@ -1,0 +1,140 @@
+{
+  "section_basic": {
+    "type": "section",
+    "name": "基础",
+    "collapsed": false,
+    "fields": {
+      "enabled": {
+        "type": "switch",
+        "name": "启用插件",
+        "default": true
+      },
+      "enable_tool": {
+        "type": "switch",
+        "name": "启用LLM工具调用(自然语言)",
+        "default": true,
+        "hint": "开启后bot可在对话中主动调用，用户说'来一首XXX'也能触发。默认开启。"
+      },
+      "enable_command": {
+        "type": "switch",
+        "name": "启用命令词触发",
+        "default": false,
+        "hint": "如 /点歌 关键词，不经LLM。"
+      },
+      "command_words": {
+        "type": "list",
+        "name": "命令词列表",
+        "default": ["/点歌", "/下音频"],
+        "hint": "每行一个，命中任意即触发。"
+      },
+      "auto_send_link": {
+        "type": "switch",
+        "name": "链接自动转语音",
+        "default": false,
+        "hint": "收到含B站链接+下载意图的消息时不经AI直接下载发送(0 token)。"
+      },
+      "strict_intent": {
+        "type": "switch",
+        "name": "严格意图校验",
+        "default": true,
+        "hint": "链接钩子需消息含 下载/语音/音频 等意图词才拦截，防误伤普通聊天。"
+      }
+    }
+  },
+  "section_permission": {
+    "type": "section",
+    "name": "权限白名单",
+    "collapsed": false,
+    "fields": {
+      "allowed_users": {
+        "type": "list",
+        "name": "QQ号白名单(仅命令式)",
+        "default": [],
+        "hint": "只对 /点歌 /下音频 命令式生效；LLM工具与链接钩子不受限制。空=不限制；填了仅名单内可用。每行一个QQ号。"
+      },
+      "allowed_groups": {
+        "type": "list",
+        "name": "群号白名单(仅命令式)",
+        "default": [],
+        "hint": "只对 /点歌 /下音频 命令式生效。空=不限制；填了仅名单内群可用。每行一个群号。"
+      },
+      "permission_denied_message": {
+        "type": "string",
+        "name": "无权限提示语",
+        "default": "❌ 权限不足：你不在本功能白名单内"
+      }
+    }
+  },
+  "section_search": {
+    "type": "section",
+    "name": "搜索与候选",
+    "collapsed": true,
+    "fields": {
+      "search_count": {
+        "type": "integer",
+        "name": "候选条数",
+        "default": 5
+      },
+      "auto_pick_top": {
+        "type": "switch",
+        "name": "自动选播放量最高直发",
+        "default": false,
+        "hint": "关=返回候选，bot可自行挑选第几个或展示给用户；开=自动选播放最高直发、跳过候选环节。"
+      },
+      "include_desc": {
+        "type": "switch",
+        "name": "返回视频简介",
+        "default": false,
+        "hint": "候选/发送时附B站视频简介。"
+      },
+      "desc_max_chars": {
+        "type": "integer",
+        "name": "简介截断字数",
+        "default": 100,
+        "hint": "include_desc开启时生效。"
+      }
+    }
+  },
+  "section_download": {
+    "type": "section",
+    "name": "下载",
+    "collapsed": true,
+    "fields": {
+      "max_seconds": {
+        "type": "integer",
+        "name": "最长音频秒数",
+        "default": 600,
+        "hint": "超限不下载(下载前按duration判断)，防QQ语音条超限。"
+      },
+      "timeout": {
+        "type": "integer",
+        "name": "请求超时秒数",
+        "default": 60
+      },
+      "cache_dir": {
+        "type": "string",
+        "name": "缓存目录(相对data/)",
+        "default": "files/bili_cache",
+        "hint": "音频缓存目录，相对 data/ 的路径。同一条视频重复点会走缓存不重新下载。"
+      },
+      "max_cache_files": {
+        "type": "integer",
+        "name": "缓存文件上限",
+        "default": 50,
+        "hint": "缓存文件数超过上限后，自动清理最旧的文件。"
+      },
+      "cleanup_count": {
+        "type": "integer",
+        "name": "单次清理数量",
+        "default": 20,
+        "hint": "每次触发清理时删除最旧的多少个文件。"
+      },
+      "cookie": {
+        "type": "sensitive",
+        "name": "B站Cookie(可选)",
+        "default": "",
+        "hint": "风控(-412)频繁时填写，降低触发概率。"
+      }
+    }
+  }
+}
