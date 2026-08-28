@@ -1,14 +1,3 @@
-"""B站音频语音条插件：下载B站视频音频并以QQ语音条发送。
-
-三入口：
-  A. LLM 工具 bili_audio_send（自然语言，默认开，bot 可自主调用，候选 AI 自选）
-  B. 命令词钩子（/点歌 /下音频，默认关）
-  C. 链接钩子（B站链接+意图词 → 0 token 直发，默认关）
-
-对齐 api-balance：BaseTool 动态注入（LLM 工具/链接钩子不受白名单限制）+ 命令式白名单 + discard(force)+stop。
-对齐 pixiv_image_searcher：工具内 send_message_chain 直发 + "已发送勿重复"提示。
-下载通道：官方 API + WBI 签名降级（bili_dl.py），httpx 全异步。
-"""
 import re
 from pathlib import Path
 
@@ -82,6 +71,7 @@ class BiliAudioSenderPlugin(BasePlugin):
         self.max_seconds = 600
         self.timeout = 60
         self.cookie = ""
+        self.proxy_mode = "auto"
         self.cache_dir_str = "files/bili_cache"
         self.max_cache_files = 50
         self.cleanup_count = 20
@@ -113,6 +103,8 @@ class BiliAudioSenderPlugin(BasePlugin):
         self.max_seconds = max(0, int(d.get("max_seconds", 600) or 600))
         self.timeout = max(5, int(d.get("timeout", 60) or 60))
         self.cookie = d.get("cookie", "")
+        pm = d.get("proxy_mode", "auto")
+        self.proxy_mode = pm if pm in bili_dl.PROXY_MODES else "auto"
         self.cache_dir_str = d.get("cache_dir", "files/bili_cache") or "files/bili_cache"
         self.max_cache_files = max(1, int(d.get("max_cache_files", 50) or 50))
         self.cleanup_count = max(1, int(d.get("cleanup_count", 20) or 20))
@@ -124,7 +116,7 @@ class BiliAudioSenderPlugin(BasePlugin):
             f"[bili_audio_sender] ready | tool={'on' if self.enable_tool else 'off'} "
             f"cmd={'on' if self.enable_command else 'off'} link={'on' if self.auto_send_link else 'off'} "
             f"pick_top={'on' if self.auto_pick_top else 'off'} max_sec={self.max_seconds} "
-            f"cache={self.cache_dir_str}")
+            f"proxy={self.proxy_mode} cache={self.cache_dir_str}")
 
     async def terminate(self):
         pass
@@ -243,7 +235,7 @@ class BiliAudioSenderPlugin(BasePlugin):
         text = "".join(e.text for e in event.message.chain if isinstance(e, Text))
         if not text:
             return
-        bvid = await bili_dl.extract_bvid(text, self.timeout)
+        bvid = await bili_dl.extract_bvid(text, self.timeout, self.proxy_mode)
         if not bvid:
             return
         if self.strict_intent and not any(w in text for w in INTENT_WORDS):
@@ -266,14 +258,14 @@ class BiliAudioSenderPlugin(BasePlugin):
         sid = self._get_sid(event)
         if bvid:
             return await self._download_and_send(sid, bvid)
-        link_bvid = await bili_dl.extract_bvid(target or "", self.timeout)
+        link_bvid = await bili_dl.extract_bvid(target or "", self.timeout, self.proxy_mode)
         if link_bvid:
             return await self._download_and_send(sid, link_bvid)
         keyword = (target or "").strip()
         if not keyword:
             return "请提供B站链接、BV号或歌曲关键词"
         if self.auto_pick_top:
-            items = await bili_dl.search(keyword, 5, self.cookie)
+            items = await bili_dl.search(keyword, 5, self.cookie, self.proxy_mode)
             if not items:
                 return f"B站未找到「{keyword}」相关视频"
             top = max(items, key=lambda x: x.get("play", 0))
@@ -281,7 +273,7 @@ class BiliAudioSenderPlugin(BasePlugin):
         return await self._search_and_pick(event, keyword)
 
     async def _search_and_pick(self, event, keyword: str) -> str:
-        items = await bili_dl.search(keyword, self.search_count, self.cookie)
+        items = await bili_dl.search(keyword, self.search_count, self.cookie, self.proxy_mode)
         if not items:
             return f"B站未找到「{keyword}」相关视频"
         lines = []
@@ -295,12 +287,13 @@ class BiliAudioSenderPlugin(BasePlugin):
     async def _download_and_send(self, sid: str, bvid: str) -> str:
         self._cleanup_cache()
         path = self._find_cache(bvid)
-        info = await bili_dl.get_info(bvid, self.cookie, self.timeout)
+        info = await bili_dl.get_info(bvid, self.cookie, self.timeout, self.proxy_mode)
         if path is None:
             if self.max_seconds and info["duration"] > self.max_seconds:
                 return f"视频时长 {info['duration']}s 超过上限 {self.max_seconds}s，未下载"
             path, _ = await bili_dl.download(bvid, self.files_dir, info=info,
-                                             cookie=self.cookie, timeout=self.timeout)
+                                             cookie=self.cookie, timeout=self.timeout,
+                                             proxy_mode=self.proxy_mode)
         title, duration, desc = info["title"], info["duration"], info["desc"]
         chain = MessageChain([Record(record=str(path), name=Path(path).name)])
         result = await self.ctx.message_processor.send_message_chain(sid, chain)
