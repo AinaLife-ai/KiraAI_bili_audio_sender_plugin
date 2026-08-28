@@ -111,6 +111,13 @@
         "name": "请求超时秒数",
         "default": 60
       },
+      "proxy_mode": {
+        "type": "enum",
+        "name": "网络代理模式",
+        "options": ["auto", "direct", "system"],
+        "default": "auto",
+        "hint": "auto=先直连，网络失败自动走系统代理重试（国内外自适应）；direct=始终直连（国内用户，不读系统代理）；system=始终走系统代理（海外用户访问B站需要）。"
+      },
       "cache_dir": {
         "type": "string",
         "name": "缓存目录(相对data/)",
