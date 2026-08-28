@@ -1,10 +1,3 @@
-"""Bilibili 音频下载库（httpx 异步版，含 WBI 签名降级）。
-
-CLI 用法（便于独立调试）:
-  python bili_dl.py search <关键词> [数量]
-  python bili_dl.py info <BV号>
-  python bili_dl.py download <BV号> [输出目录] [最大秒数]
-"""
 import asyncio
 import hashlib
 import json
@@ -47,17 +40,41 @@ def _api_err(code, raw_msg: str = "") -> str:
     return f"B站接口返回错误（code={code} {raw_msg}）".strip()
 
 
+def _net_err(e: Exception) -> str:
+    """把 httpx 网络异常翻译成可读提示，LLM 可直接决策。"""
+    if isinstance(e, httpx.ConnectError):
+        return "无法连接B站服务器（网络不通或系统代理异常）"
+    if isinstance(e, httpx.ConnectTimeout):
+        return "连接B站服务器超时"
+    if isinstance(e, httpx.ReadTimeout):
+        return "读取B站响应超时"
+    if isinstance(e, httpx.HTTPStatusError):
+        return f"HTTP {e.response.status_code}"
+    return str(e)
+
+
 def _client(cookie: str = "", timeout: float = 60.0) -> httpx.AsyncClient:
     headers = dict(HEADERS)
     if cookie:
         headers["Cookie"] = cookie
-    return httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=timeout)
+    # trust_env=False：不读系统/环境代理，B站国内服务直连。
+    # 否则 Windows 系统代理（如 127.0.0.1:7897）开着但代理软件未启动时，
+    # 所有请求都会 ConnectError（曾导致 tool failed）。
+    return httpx.AsyncClient(headers=headers, follow_redirects=True,
+                             timeout=timeout, trust_env=False)
 
 
 async def _get_json(client: httpx.AsyncClient, url: str, params: dict | None = None) -> dict:
-    resp = await client.get(url, params=params)
-    resp.raise_for_status()
-    return resp.json()
+    try:
+        resp = await client.get(url, params=params)
+    except httpx.HTTPError as e:
+        raise BiliError(f"网络请求失败：{_net_err(e)}") from e
+    # 不 raise_for_status：B站 412 等风控会带 JSON body（code=-412），
+    # 直接读 body 才能走 _api_err 翻译成可读提示
+    try:
+        return resp.json()
+    except ValueError:
+        raise BiliError(f"B站接口返回异常（HTTP {resp.status_code}，非 JSON 响应）") from None
 
 
 async def search(keyword: str, count: int = 5, cookie: str = "") -> list[dict]:
@@ -147,17 +164,29 @@ async def download(bvid: str, out_dir, info: dict | None = None, cookie: str = "
         if fpath.exists() and fpath.stat().st_size > 0:
             return str(fpath), info
         url = await _get_audio_url(c, bvid, info["cid"])
-        async with c.stream("GET", url) as resp:
-            resp.raise_for_status()
-            with open(fpath, "wb") as f:
-                async for chunk in resp.aiter_bytes(8192):
-                    f.write(chunk)
+        try:
+            async with c.stream("GET", url) as resp:
+                if resp.status_code != 200:
+                    raise BiliError(f"音频流下载失败（HTTP {resp.status_code}）")
+                with open(fpath, "wb") as f:
+                    async for chunk in resp.aiter_bytes(8192):
+                        f.write(chunk)
+        except BiliError:
+            raise
+        except httpx.HTTPError as e:
+            # 下载中断时清理半截文件，避免下次误判为有效缓存
+            try:
+                fpath.unlink(missing_ok=True)
+            except Exception:
+                pass
+            raise BiliError(f"音频流下载失败：{_net_err(e)}") from e
         return str(fpath), info
 
 
 async def resolve_short(url: str, timeout: float = 15.0) -> str:
     """b23.tv 短链 → 真实 URL。"""
-    async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True, timeout=timeout) as c:
+    async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True,
+                                 timeout=timeout, trust_env=False) as c:
         r = await c.get(url)
         return str(r.url)
 
