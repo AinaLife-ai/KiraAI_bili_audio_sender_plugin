@@ -247,10 +247,12 @@ class BiliAudioSenderPlugin(BasePlugin):
             reply = await self._download_and_send(event.session.sid, bvid)
             if reply.startswith("已直接发送"):
                 # 成功 → 记录 auto_sent 但不 discard，消息继续自然流转
+                title = reply.split("《")[1].split("》")[0] if "《" in reply else bvid
                 self._auto_sent[event.session.sid] = {
                     "bvid": bvid,
-                    "title": reply.split("《")[1].split("》")[0] if "《" in reply else bvid,
+                    "title": title,
                     "file_rel": reply.split("发送的文件：")[-1].strip() if "发送的文件：" in reply else "",
+                    "text": text,  # 原始文本用于后续匹配定位
                 }
             else:
                 # 失败（时长超限等）→ 补发文字提示，不记录 auto_sent
@@ -270,11 +272,26 @@ class BiliAudioSenderPlugin(BasePlugin):
         if not sent:
             return
         note = (
-            f"[系统提示：用户曾发送链接 {sent['bvid']}（《{sent['title']}》），"
-            f"已自动下载并发送语音条（{sent['file_rel']}），无需再处理该链接]"
+            f"\n[系统提示：该链接（《{sent['title']}》）"
+            f"已自动转为语音条（{sent['file_rel']}）]"
         )
-        # 放到 user_prompt 最前面，作为本次消息的上下文说明，不污染 system prompt
-        req.user_prompt.insert(0, Prompt(note, name="bili_auto_sent_note", source="plugin", persist=False))
+        # 按顺序遍历 messages ↔ user_prompt，定位原始链接消息追加 note
+        prompt_idx = 0
+        for msg in event.messages:
+            # 跳过 user_prompt 中非 message 条目
+            while prompt_idx < len(req.user_prompt) and not (
+                    req.user_prompt[prompt_idx].name == "message"
+                    and req.user_prompt[prompt_idx].source == "system"
+            ):
+                prompt_idx += 1
+            if prompt_idx >= len(req.user_prompt):
+                break
+            p = req.user_prompt[prompt_idx]
+            prompt_idx += 1
+            msg_text = "".join(e.text for e in msg.chain if isinstance(e, Text)).strip()
+            if msg_text == sent["text"]:
+                p.content += note
+                break
 
     # ---------- 核心处理 ----------
     async def _handle_request(self, event, target: str, bvid: str) -> str:
