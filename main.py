@@ -273,7 +273,8 @@ class BiliAudioSenderPlugin(BasePlugin):
             f"[系统提示：用户曾发送链接 {sent['bvid']}（《{sent['title']}》），"
             f"已自动下载并发送语音条（{sent['file_rel']}），无需再处理该链接]"
         )
-        req.system_prompt.append(Prompt(note, name="bili_auto_sent", source="plugin", persist=False))
+        # 放到 user_prompt 最前面，作为本次消息的上下文说明，不污染 system prompt
+        req.user_prompt.insert(0, Prompt(note, name="bili_auto_sent_note", source="plugin", persist=False))
 
     # ---------- 核心处理 ----------
     async def _handle_request(self, event, target: str, bvid: str) -> str:
