@@ -31,7 +31,7 @@
         "type": "switch",
         "name": "链接自动转语音",
         "default": false,
-        "hint": "收到含B站链接+下载意图的消息时不经AI直接下载发送(0 token)。"
+        "hint": "收到含B站链接+下载意图的消息时不经AI直接下载发送(0 token)。原始消息不被discard，继续进入LLM上下文，并注入系统提示标注已直发。"
       },
       "strict_intent": {
         "type": "switch",

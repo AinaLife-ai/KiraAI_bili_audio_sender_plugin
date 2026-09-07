@@ -11,9 +11,10 @@ from core.logging_manager import get_logger
 from core.utils.tool_utils import BaseTool
 from core.provider import LLMRequest
 from core.chat import MessageChain
-from core.chat.message_utils import KiraMessageEvent
+from core.chat.message_utils import KiraMessageEvent, KiraMessageBatchEvent
 from core.chat.message_elements import Text, Record
 from core.utils.path_utils import get_data_path
+from core.prompt_manager import Prompt
 
 logger = get_logger("bili_audio_sender", "cyan")
 
@@ -78,6 +79,8 @@ class BiliAudioSenderPlugin(BasePlugin):
         self.files_dir: Path | None = None
 
     async def initialize(self):
+        self._auto_sent: dict[str, dict] = {}  # sid → {"bvid": ..., "title": ..., "file_rel": ...}
+
         sec = self.plugin_cfg.get("section_basic", {})
         self.enabled = sec.get("enabled", True)
         self.enable_tool = sec.get("enable_tool", True)
@@ -240,11 +243,19 @@ class BiliAudioSenderPlugin(BasePlugin):
             return
         if self.strict_intent and not any(w in text for w in INTENT_WORDS):
             return
-        event.discard()
         try:
             reply = await self._download_and_send(event.session.sid, bvid)
-            # 成功时语音条已发（reply 为"已发送"文案），无需再发文字；候选/其它提示才补发
-            if not reply.startswith("已直接发送"):
+            if reply.startswith("已直接发送"):
+                # 成功 → 记录 auto_sent 但不 discard，消息继续自然流转
+                title = reply.split("《")[1].split("》")[0] if "《" in reply else bvid
+                self._auto_sent[event.session.sid] = {
+                    "bvid": bvid,
+                    "title": title,
+                    "file_rel": reply.split("发送的文件：")[-1].strip() if "发送的文件：" in reply else "",
+                    "text": text,  # 原始文本用于后续匹配定位
+                }
+            else:
+                # 失败（时长超限等）→ 补发文字提示，不记录 auto_sent
                 await self.ctx.message_processor.send_message_chain(
                     event.session.sid, MessageChain([Text(reply)]))
         except bili_dl.BiliError as e:
@@ -252,6 +263,35 @@ class BiliAudioSenderPlugin(BasePlugin):
                 event.session.sid, MessageChain([Text(f"下载失败：{e}")]))
         except Exception:
             logger.exception("[bili_audio_sender] link hook failed")
+
+    # ---------- 入口 D：已直发的 LLM 上下文标注 ----------
+    @on.llm_request(priority=Priority.LOW)
+    async def inject_auto_sent_note(self, event: KiraMessageBatchEvent, req: LLMRequest, *_):
+        sid = event.session.sid
+        sent = self._auto_sent.pop(sid, None)
+        if not sent:
+            return
+        note = (
+            f"\n[系统提示：该链接（《{sent['title']}》）"
+            f"已自动转为语音条（{sent['file_rel']}）]"
+        )
+        # 按顺序遍历 messages ↔ user_prompt，定位原始链接消息追加 note
+        prompt_idx = 0
+        for msg in event.messages:
+            # 跳过 user_prompt 中非 message 条目
+            while prompt_idx < len(req.user_prompt) and not (
+                    req.user_prompt[prompt_idx].name == "message"
+                    and req.user_prompt[prompt_idx].source == "system"
+            ):
+                prompt_idx += 1
+            if prompt_idx >= len(req.user_prompt):
+                break
+            p = req.user_prompt[prompt_idx]
+            prompt_idx += 1
+            msg_text = "".join(e.text for e in msg.chain if isinstance(e, Text)).strip()
+            if msg_text == sent["text"]:
+                p.content += note
+                break
 
     # ---------- 核心处理 ----------
     async def _handle_request(self, event, target: str, bvid: str) -> str:
