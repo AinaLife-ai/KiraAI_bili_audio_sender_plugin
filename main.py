@@ -20,6 +20,20 @@ logger = get_logger("bili_audio_sender", "cyan")
 
 INTENT_WORDS = ("下载", "语音条", "语音", "音频", "拉下来", "转语音", "提取", "弄成")
 
+#: 本插件适用的 QQ 系平台：
+#:   * `"QQ"`          —— OneBot 系 QQ 适配器（NapCat / LLOneBot 等，KiraAI 里统称 QQ）
+#:   * `"QQ Official"` —— QQ 官方机器人（OpenAPI）适配器
+#: 官方 bot **同样支持语音条**（平台侧要求 `file_type=3` + **silk** 格式）：
+#: 音频形态（转 silk / 修正 file_type / 被动窗口兜底）由**发送侧**负责 ——
+#: 装了 `qqbot-fullmsg-bridge` 就自动补正；本插件只负责"B 站 → 音频文件"这段，
+#: 所以这里**放行即可**，不需要在插件里重复实现转码。
+_QQ_PLATFORMS = ("QQ", "QQ Official")
+
+
+def _is_qq(event) -> bool:
+    """当前事件是不是 QQ 系平台（OneBot 系 或 官方机器人）。"""
+    return str(getattr(getattr(event, "adapter", None), "platform", "") or "") in _QQ_PLATFORMS
+
 
 class BiliAudioTool(BaseTool):
     name = "bili_audio_send"
@@ -40,7 +54,7 @@ class BiliAudioTool(BaseTool):
         self.plugin = plugin
 
     async def execute(self, event, target: str = "", bvid: str = "", *args, **kwargs) -> str:
-        if event.adapter.platform != "QQ":
+        if not _is_qq(event):
             return "当前会话不是QQ，无法发送语音条"
         target = target or ""
         try:
@@ -202,7 +216,7 @@ class BiliAudioSenderPlugin(BasePlugin):
     # ---------- 入口 B：命令词钩子 ----------
     @on.im_message(priority=Priority.HIGH)
     async def handle_command(self, event: KiraMessageEvent, *_):
-        if not self.enabled or not self.enable_command or event.adapter.platform != "QQ":
+        if not self.enabled or not self.enable_command or not _is_qq(event):
             return
         text = "".join(e.text for e in event.message.chain if isinstance(e, Text)).strip()
         if not text:
@@ -233,7 +247,7 @@ class BiliAudioSenderPlugin(BasePlugin):
     # ---------- 入口 C：链接钩子（0 token） ----------
     @on.im_message(priority=Priority.HIGH)
     async def handle_link(self, event: KiraMessageEvent, *_):
-        if not self.enabled or not self.auto_send_link or event.adapter.platform != "QQ":
+        if not self.enabled or not self.auto_send_link or not _is_qq(event):
             return
         text = "".join(e.text for e in event.message.chain if isinstance(e, Text))
         if not text:
